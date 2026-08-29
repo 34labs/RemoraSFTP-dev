@@ -3,8 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'          # push a tag like v0.1.0 to publish a release
-  workflow_dispatch:  # allow manual triggering
+      - 'v*'                 # pushing a tag like v0.1.0 publishes a release
+  workflow_dispatch:          # also allow manual triggering from the Actions tab
     inputs:
       tag:
         description: 'Tag to build (e.g. v0.1.0)'
@@ -12,7 +12,7 @@ on:
         default: 'v0.0.0'
 
 permissions:
-  contents: write   # required to create the GitHub Release and upload assets
+  contents: write              # required to create the release and upload assets
 
 env:
   GO_VERSION: '1.22'
@@ -26,80 +26,109 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Resolve version
-        id: ver
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Resolve version tag
+        id: tag
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG="${{ github.event.inputs.tag }}"
           else
             TAG="${GITHUB_REF_NAME}"
           fi
-          VERSION="${TAG#v}"          # strip a leading 'v'
-          echo "tag=$TAG"       >> "$GITHUB_OUTPUT"
+          VERSION="${TAG#v}"      # strip a leading 'v' (v0.1.0 -> 0.1.0)
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building release for tag=$TAG version=$VERSION"
+          echo "Building release: tag=$TAG version=$VERSION"
+
+      - name: Detect module path and main package
+        id: mod
+        run: |
+          MODPATH="$(go list -m)"
+          # Pick the first executable (package main) that isn't a test build
+          # and isn't one of the offline thirdparty stubs.
+          MAINPKG="$(go list -f '{{if and (eq .Name "main") (not .ForTest)}}{{.ImportPath}}{{end}}' ./... \
+                     | grep -v '/thirdparty/' \
+                     | sed '/^$/d' \
+                     | head -1)"
+          if [ -z "$MAINPKG" ]; then
+            echo "::error::Could not find a package main to build."
+            exit 1
+          fi
+          echo "module=$MODPATH"
+          echo "main package=$MAINPKG"
+          echo "modpath=$MODPATH" >> "$GITHUB_OUTPUT"
+          echo "mainpkg=$MAINPKG" >> "$GITHUB_OUTPUT"
 
       - name: Build the embedded web UI
         working-directory: web
         run: |
           npm ci || npm install --no-audit --no-fund
+          npx tsc --noEmit
           npx vite build
 
       - name: Cross-compile binaries
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
+          MOD: ${{ steps.mod.outputs.modpath }}
+          MAIN: ${{ steps.mod.outputs.mainpkg }}
+          VERSION: ${{ steps.tag.outputs.version }}
           COMMIT: ${{ github.sha }}
-          BUILT_AT: ${{ github.event.repository.updated_at }}
         run: |
           set -euo pipefail
           mkdir -p dist
-          LDFLAGS="-X remorasftp/internal/version.Version=${VERSION} \
-                   -X remorasftp/internal/version.Commit=${COMMIT} \
-                   -X remorasftp/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+
+          LDFLAGS="-X ${MOD}/internal/version.Version=${VERSION} \
+                   -X ${MOD}/internal/version.Commit=${COMMIT} \
+                   -X ${MOD}/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
                    -s -w"
 
-          # Linux (amd64)
-          GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o dist/remorasftp ./cmd/remorasftp
-          tar -C dist -czf dist/remorasftp-linux-amd64.tar.gz remorasftp
-          rm dist/remorasftp
+          build() {  # $1 = GOOS, $2 = GOARCH, $3 = output binary name
+            GOOS="$1" GOARCH="$2" go build -trimpath -ldflags "$LDFLAGS" -o "dist/$3" "$MAIN"
+          }
 
-          # macOS (Intel + Apple Silicon)
-          GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o dist/remorasftp ./cmd/remorasftp
-          tar -C dist -czf dist/remorasftp-macos-amd64.tar.gz remorasftp
-          rm dist/remorasftp
-          GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o dist/remorasftp ./cmd/remorasftp
-          tar -C dist -czf dist/remorasftp-macos-arm64.tar.gz remorasftp
-          rm dist/remorasftp
+          echo "== Linux amd64 =="
+          build linux amd64 sftpbox
+          tar -C dist -czf dist/sftpbox-linux-amd64.tar.gz sftpbox
+          rm dist/sftpbox
 
-          # Windows (amd64)
-          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o dist/remorasftp.exe ./cmd/remorasftp
-          (cd dist && zip -q remorasftp-windows-amd64.zip remorasftp.exe)
-          rm dist/remorasftp.exe
+          echo "== macOS Intel =="
+          build darwin amd64 sftpbox
+          tar -C dist -czf dist/sftpbox-macos-amd64.tar.gz sftpbox
+          rm dist/sftpbox
 
-          # SHA-256 checksums
+          echo "== macOS Apple Silicon =="
+          build darwin arm64 sftpbox
+          tar -C dist -czf dist/sftpbox-macos-arm64.tar.gz sftpbox
+          rm dist/sftpbox
+
+          echo "== Windows amd64 =="
+          build windows amd64 sftpbox.exe
+          (cd dist && zip -q sftpbox-windows-amd64.zip sftpbox.exe)
+          rm dist/sftpbox.exe
+
+          echo "== Checksums =="
           (cd dist && sha256sum *.tar.gz *.zip > checksums.txt)
+
           ls -lh dist
 
-      - name: Create GitHub Release and upload assets
+      - name: Create GitHub Release & upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.ver.outputs.tag }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           gh release create "$TAG" \
-            --title "RemoraSFTP $TAG" \
+            --title "SftpBox $TAG" \
             --generate-notes \
-            dist/remorasftp-linux-amd64.tar.gz \
-            dist/remorasftp-macos-amd64.tar.gz \
-            dist/remorasftp-macos-arm64.tar.gz \
-            dist/remorasftp-windows-amd64.zip \
+            dist/sftpbox-linux-amd64.tar.gz \
+            dist/sftpbox-macos-amd64.tar.gz \
+            dist/sftpbox-macos-arm64.tar.gz \
+            dist/sftpbox-windows-amd64.zip \
             dist/checksums.txt
