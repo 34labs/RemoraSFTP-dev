@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'          # push a tag like v0.1.0 to publish a release
+  workflow_dispatch:  # allow manual triggering
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v0.1.0)'
+        required: true
+        default: 'v0.0.0'
+
+permissions:
+  contents: write   # required to create the GitHub Release and upload assets
+
+env:
+  GO_VERSION: '1.22'
+  NODE_VERSION: '20'
+
+jobs:
+  release:
+    name: Build binaries & publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${TAG#v}"          # strip a leading 'v'
+          echo "tag=$TAG"       >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building release for tag=$TAG version=$VERSION"
+
+      - name: Build the embedded web UI
+        working-directory: web
+        run: |
+          npm ci || npm install --no-audit --no-fund
+          npx vite build
+
+      - name: Cross-compile binaries
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          COMMIT: ${{ github.sha }}
+          BUILT_AT: ${{ github.event.repository.updated_at }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          LDFLAGS="-X remorasftp/internal/version.Version=${VERSION} \
+                   -X remorasftp/internal/version.Commit=${COMMIT} \
+                   -X remorasftp/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+                   -s -w"
+
+          # Linux (amd64)
+          GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o dist/remorasftp ./cmd/remorasftp
+          tar -C dist -czf dist/remorasftp-linux-amd64.tar.gz remorasftp
+          rm dist/remorasftp
+
+          # macOS (Intel + Apple Silicon)
+          GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o dist/remorasftp ./cmd/remorasftp
+          tar -C dist -czf dist/remorasftp-macos-amd64.tar.gz remorasftp
+          rm dist/remorasftp
+          GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o dist/remorasftp ./cmd/remorasftp
+          tar -C dist -czf dist/remorasftp-macos-arm64.tar.gz remorasftp
+          rm dist/remorasftp
+
+          # Windows (amd64)
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o dist/remorasftp.exe ./cmd/remorasftp
+          (cd dist && zip -q remorasftp-windows-amd64.zip remorasftp.exe)
+          rm dist/remorasftp.exe
+
+          # SHA-256 checksums
+          (cd dist && sha256sum *.tar.gz *.zip > checksums.txt)
+          ls -lh dist
+
+      - name: Create GitHub Release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --title "RemoraSFTP $TAG" \
+            --generate-notes \
+            dist/remorasftp-linux-amd64.tar.gz \
+            dist/remorasftp-macos-amd64.tar.gz \
+            dist/remorasftp-macos-arm64.tar.gz \
+            dist/remorasftp-windows-amd64.zip \
+            dist/checksums.txt
