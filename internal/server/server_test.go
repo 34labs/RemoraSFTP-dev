@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -18,10 +19,12 @@ import (
 	"remorasftp/internal/trust"
 )
 
+// newTestServer starts an engine on an ephemeral loopback port for tests.
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("SFTPBOX_DATA_DIR", dir)
+
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -38,6 +41,7 @@ func newTestServer(t *testing.T) *Server {
 	mgr := manager.New(cfg, creds, tr, bus)
 	tm := transfers.New(bus, mgr, 2)
 	srv := New(Options{Config: cfg, Manager: mgr, Transfers: tm, Bus: bus})
+
 	if err := srv.Start("127.0.0.1", 0); err != nil {
 		t.Fatal(err)
 	}
@@ -49,10 +53,19 @@ func newTestServer(t *testing.T) *Server {
 	return srv
 }
 
-// injectClient registers a live session in the manager backed by a provided
-// protocol client (test support).
+// injectClient registers a connected session backed by cl (test support).
 func injectClient(srv *Server, sessionID string, cl protocol.Client) {
-	managerInjectClient(srv.mgr, sessionID, cl)
+	caps := cl.Capabilities()
+	srv.mgr.InjectTestSession(sessionID, manager.TestSession{
+		ConnID:      "test-conn",
+		ConnName:    "Test",
+		Protocol:    caps.Protocol,
+		Host:        "test.local",
+		StartDir:    "/",
+		CWD:         "/",
+		Client:      cl,
+		ConnectedAt: time.Now(),
+	})
 }
 
 func TestBindsLoopbackOnly(t *testing.T) {
@@ -71,8 +84,9 @@ func TestBootstrapFlow(t *testing.T) {
 	srv := newTestServer(t)
 	base := "http://" + srv.Addr()
 
-	// Forged bootstrap code rejected.
-	resp, err := http.Post(base+"/api/bootstrap", "application/json", strings.NewReader(`{"code":"forged"}`))
+	// Forged code rejected.
+	resp, err := http.Post(base+"/api/bootstrap", "application/json",
+		strings.NewReader(`{"code":"forged"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,36 +98,39 @@ func TestBootstrapFlow(t *testing.T) {
 	// Valid single-use code redeems once.
 	code := srv.auth.newBootstrapCode(time.Minute)
 	body, _ := json.Marshal(map[string]string{"code": code})
-	resp, err = http.Post(base+"/api/bootstrap", "application/json", strings.NewReader(string(body)))
+	resp, err = http.Post(base+"/api/bootstrap", "application/json",
+		strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var out struct {
 		Token string `json:"token"`
 	}
-	json.NewDecoder(resp.Body).Decode(&out)
+	_ = json.NewDecoder(resp.Body).Decode(&out)
 	resp.Body.Close()
 	if out.Token == "" || out.Token != srv.Token() {
 		t.Fatal("bootstrap did not return the instance token")
 	}
 
-	// Second redemption of the same code fails.
-	resp, _ = http.Post(base+"/api/bootstrap", "application/json", strings.NewReader(string(body)))
+	// Second redemption fails.
+	resp, _ = http.Post(base+"/api/bootstrap", "application/json",
+		strings.NewReader(string(body)))
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("reused code: got %d, want 401", resp.StatusCode)
 	}
 	resp.Body.Close()
 }
 
-func TestConnectionProfileCRUD(t *testing.T) {
+func TestConnectionProfileDoesNotLeakSecret(t *testing.T) {
 	srv := newTestServer(t)
 	base := "http://" + srv.Addr()
 	token := srv.Token()
 
-	do := func(method, path string, body string) *http.Response {
+	// do always sends the CSRF header that state-changing requests require.
+	do := func(method, path, body string) *http.Response {
 		req, _ := http.NewRequest(method, base+path, strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("X-Requested-With", "RemoraSFTP")
+		req.Header.Set("X-Requested-With", "SftpBox") // required for non-GET
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -122,34 +139,32 @@ func TestConnectionProfileCRUD(t *testing.T) {
 		return resp
 	}
 
-	// Create.
-	resp := do("POST", "/api/connections", `{"name":"T","protocol":"sftp","host":"h","port":22,"username":"u","password":"secret-pw"}`)
+	// Create (POST -> needs X-Requested-With).
+	resp := do("POST", "/api/connections",
+		`{"name":"T","protocol":"sftp","host":"h","port":22,"username":"u","password":"secret-pw"}`)
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create: %d", resp.StatusCode)
+		buf, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("create: %d body=%s", resp.StatusCode, string(buf))
 	}
 	var created struct {
 		Connection struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
+			ID string `json:"id"`
 		} `json:"connection"`
 	}
-	json.NewDecoder(resp.Body).Decode(&created)
+	_ = json.NewDecoder(resp.Body).Decode(&created)
 	resp.Body.Close()
 	id := created.Connection.ID
 
-	// List must not echo the password back.
+	// List must never echo the password.
 	resp = do("GET", "/api/connections", "")
-	var list struct {
-		Connections []map[string]any `json:"connections"`
-	}
-	json.NewDecoder(resp.Body).Decode(&list)
+	raw, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	raw, _ := json.Marshal(list)
 	if strings.Contains(string(raw), "secret-pw") {
 		t.Fatal("secret leaked through the connection list response")
 	}
 
-	// Delete.
+	// Delete (DELETE -> needs X-Requested-With).
 	resp = do("DELETE", "/api/connections/"+id, "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("delete: %d", resp.StatusCode)
@@ -169,4 +184,51 @@ func TestSecurityHeaders(t *testing.T) {
 			t.Errorf("security header %q missing", h)
 		}
 	}
+}
+
+// TestSPAFallbackForClientRoutes is the regression test for the
+// "/bootstrap/<code> -> 404 page not found" bug: client-side routes must be
+// served index.html, and only truly-missing assets return 404.
+func TestSPAFallbackForClientRoutes(t *testing.T) {
+	srv := newTestServer(t)
+	base := "http://" + srv.Addr()
+
+	for _, route := range []string{
+		"/",
+		"/bootstrap/GB5p___P0qIOUnF8xZmweg",
+		"/transfers",
+		"/settings",
+		"/activity",
+	} {
+		resp, err := http.Get(base + route)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s: status %d, want 200 (SPA fallback)", route, resp.StatusCode)
+		}
+		if !strings.Contains(string(body), `<div id="root">`) {
+			t.Fatalf("GET %s: expected SPA index.html, body started %q",
+				route, truncate(string(body), 80))
+		}
+	}
+
+	// Missing hashed asset stays a real 404 (must not return HTML as JS).
+	resp, err := http.Get(base + "/assets/does-not-exist-0000.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing /assets file: got %d, want 404", resp.StatusCode)
+	}
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }

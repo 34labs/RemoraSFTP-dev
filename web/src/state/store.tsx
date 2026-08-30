@@ -46,6 +46,7 @@ interface StoreValue {
   refreshTransfers: () => Promise<void>;
   refreshActivity: () => Promise<void>;
   setTrustPrompt: (p: TrustPrompt | null) => void;
+  trustFromError: (e: unknown, retryConnectionId: string) => void;
   notify: (tone: Toast['tone'], message: string) => void;
   dismissToast: (id: number) => void;
   setSettings: (s: Settings) => Promise<void>;
@@ -114,6 +115,47 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // trustFromError builds the trust dialog directly from a 409 connect
+  // response (untrusted host key / cert), so the prompt works even if the
+  // WebSocket event stream isn't up yet. After trusting, it retries the
+  // connection.
+  const trustFromError = useCallback(
+    (e: unknown, retryConnectionId: string) => {
+      if (
+        !(e instanceof ApiError) ||
+        (e.code !== 'untrusted-host-key' && e.code !== 'untrusted-certificate')
+      ) {
+        return;
+      }
+      const d = ((e.data as Record<string, unknown>) ?? {}) as Record<string, unknown>;
+      setTrustPrompt({
+        kind:
+          (d.kind as TrustPrompt['kind']) ??
+          (e.code === 'untrusted-certificate' ? 'tls' : 'ssh'),
+        hostPort: (d.hostPort as string) ?? '',
+        fingerprint: (d.fingerprint as string) ?? '',
+        keyType: d.keyType as string | undefined,
+        subject: d.subject as string | undefined,
+        detail: d.detail as string | undefined,
+        onTrust: async () => {
+          try {
+            await api.trust(String(d.hostPort), String(d.fingerprint));
+            notify('success', 'Identity trusted');
+            try {
+              await api.connect(retryConnectionId);
+              await refreshSessions();
+            } catch (inner) {
+              trustFromError(inner, retryConnectionId);
+            }
+          } catch {
+            notify('error', 'Could not record trust decision');
+          }
+        },
+      });
+    },
+    [notify, refreshSessions],
+  );
+
   // Bootstrap: if opened on /bootstrap/<code>, exchange the single-use code
   // for a token, then replace the URL so the code never stays in history.
   const doBootstrap = useCallback(async () => {
@@ -134,8 +176,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const connectEvents = useCallback(() => {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const url = `${proto}://${window.location.host}/api/events`;
-    const token = sessionStorage.getItem('remorasftp.token');
-    const ws = new WebSocket(url, token ? ['remorasftp', `remorasftp.${token}`] : ['remorasftp']);
+    const token = sessionStorage.getItem('sftpbox.token');
+    const ws = new WebSocket(url, token ? ['sftpbox', `sftpbox.${token}`] : ['sftpbox']);
     wsRef.current = ws;
     ws.onmessage = (ev) => {
       try {
@@ -202,7 +244,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     ws.onclose = () => {
       // Reconnect after a short delay, unless the engine is gone.
       setTimeout(() => {
-        if (document.visibilityState !== 'hidden' && sessionStorage.getItem('remorasftp.token')) {
+        if (document.visibilityState !== 'hidden' && sessionStorage.getItem('sftpbox.token')) {
           connectEvents();
         }
       }, 3000);
@@ -298,6 +340,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       refreshTransfers,
       refreshActivity,
       setTrustPrompt,
+      trustFromError,
       notify,
       dismissToast,
       setSettings,
@@ -305,7 +348,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     [
       engine, authenticated, settings, connections, sessions, transfers, activity, toasts,
       trustPrompt, onboarded, refreshConnections, refreshSessions, refreshTransfers, refreshActivity,
-      notify, dismissToast, setSettings,
+      trustFromError, notify, dismissToast, setSettings,
     ],
   );
 

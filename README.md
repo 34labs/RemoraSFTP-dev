@@ -2,7 +2,7 @@
 
 # RemoraSFTP
 
-![RemoraSFTP Logo](./RemoraSFTP.jpg)
+![RemoraSFTP Logo](./docs/RemoraSFTP.jpg)
 
 **A local-first browser file manager for FTP, FTPS, and SFTP.**
 

@@ -122,10 +122,11 @@ export function FilesView({ onNavigate }: { onNavigate?: (v: View) => void }) {
       await store.refreshSessions();
       notify('success', t('connections.connected'));
     } catch (e) {
-      if (!(e instanceof ApiError && (e.code === 'untrusted-host-key' || e.code === 'untrusted-certificate'))) {
+      if (e instanceof ApiError && (e.code === 'untrusted-host-key' || e.code === 'untrusted-certificate')) {
+        store.trustFromError(e, connId);
+      } else {
         notify('error', e instanceof Error ? e.message : 'Connect failed');
       }
-      // Trust prompts are driven via WebSocket / the error is stored.
     }
   };
 
@@ -176,7 +177,7 @@ export function FilesView({ onNavigate }: { onNavigate?: (v: View) => void }) {
           await fetch(api.uploadUrl(session.id, path, f.name), {
             method: 'POST',
             headers: {
-              Authorization: `Bearer ${sessionStorage.getItem('remorasftp.token')}`,
+              Authorization: `Bearer ${sessionStorage.getItem('sftpbox.token')}`,
               'X-Requested-With': 'RemoraSFTP',
             },
             body: f,
@@ -196,7 +197,7 @@ export function FilesView({ onNavigate }: { onNavigate?: (v: View) => void }) {
     if (!session) return;
     try {
       const res = await fetch(api.downloadUrl(session.id, e.path), {
-        headers: { Authorization: `Bearer ${sessionStorage.getItem('remorasftp.token')}` },
+        headers: { Authorization: `Bearer ${sessionStorage.getItem('sftpbox.token')}` },
       });
       if (!res.ok) throw new Error('Download failed');
       const blob = await res.blob();
@@ -491,13 +492,13 @@ export function FilesView({ onNavigate }: { onNavigate?: (v: View) => void }) {
                         </span>
                       </td>
                       <td className="muted mono" style={{ fontSize: 12.5 }}>
-                        {e.type === 'dir' ? '-' : formatBytes(e.size)}
+                        {e.type === 'dir' ? '—' : formatBytes(e.size)}
                       </td>
                       <td className="muted" style={{ fontSize: 12.5 }}>
                         {formatDate(e.modTime)}
                       </td>
                       <td className="mono muted" style={{ fontSize: 12 }}>
-                        {e.permissions || '-'}
+                        {e.permissions || '—'}
                       </td>
                     </tr>
                   );

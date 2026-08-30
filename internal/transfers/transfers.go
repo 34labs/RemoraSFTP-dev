@@ -735,10 +735,11 @@ func (p *partFile) Commit() error {
 	}
 	p.done = true
 	if err := p.File.Close(); err != nil {
+		_ = os.Remove(p.part)
 		_ = os.RemoveAll(p.jobDir)
 		return err
 	}
-	if err := os.Rename(p.part, p.final); err != nil {
+	if err := moveFile(p.part, p.final); err != nil {   // cross-fs safe
 		_ = os.Remove(p.part)
 		_ = os.RemoveAll(p.jobDir)
 		return err

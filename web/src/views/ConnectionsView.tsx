@@ -12,7 +12,7 @@ export function ConnectionsView({
   onCreate: () => void;
 }) {
   const { t } = useI18n();
-  const { connections, sessions, notify, refreshSessions } = useStore();
+  const { connections, sessions, notify, refreshSessions, trustFromError } = useStore();
   const [busy, setBusy] = useState<string | null>(null);
 
   const sessionFor = (id: string) => sessions.find((s) => s.connectionId === id);
@@ -25,7 +25,7 @@ export function ConnectionsView({
       notify('success', t('live.connected', { name: c.name }));
     } catch (e) {
       if (e instanceof ApiError && (e.code === 'untrusted-host-key' || e.code === 'untrusted-certificate')) {
-        notify('info', t('hostkey.title'));
+        trustFromError(e, c.id);
       } else {
         notify('error', e instanceof Error ? e.message : 'Connect failed');
       }
@@ -45,7 +45,11 @@ export function ConnectionsView({
       await api.testConnection(c.id);
       notify('success', t('connections.testOk'));
     } catch (e) {
-      notify('error', e instanceof Error ? e.message : t('connections.testFailed'));
+      if (e instanceof ApiError && (e.code === 'untrusted-host-key' || e.code === 'untrusted-certificate')) {
+        trustFromError(e, c.id);
+      } else {
+        notify('error', e instanceof Error ? e.message : t('connections.testFailed'));
+      }
     } finally {
       setBusy(null);
     }

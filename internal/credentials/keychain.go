@@ -15,10 +15,10 @@ type keychainProvider struct{}
 func newKeychainProvider() (*keychainProvider, error) {
 	// Probe the backend. On Linux without a Secret Service/D-Bus this
 	// returns an error; callers fall back to the file provider.
-	if err := keyring.Set(ServiceName, "__sftpbox_probe__", "probe"); err != nil {
+	if err := keyring.Set(ServiceName, "__remorasftp_probe__", "probe"); err != nil {
 		return nil, err
 	}
-	_ = keyring.Delete(ServiceName, "__sftpbox_probe__")
+	_ = keyring.Delete(ServiceName, "__remorasftp_probe__")
 	return &keychainProvider{}, nil
 }
 

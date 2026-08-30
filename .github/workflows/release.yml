@@ -85,14 +85,14 @@ jobs:
                    -s -w"
           build() { GOOS="$1" GOARCH="$2" go build -trimpath -ldflags "$LDFLAGS" -o "dist/$3" "$MAIN"; }
 
-          build linux   amd64 sftpbox
-          tar -C dist -czf dist/sftpbox-linux-amd64.tar.gz   sftpbox && rm dist/sftpbox
-          build darwin  amd64 sftpbox
-          tar -C dist -czf dist/sftpbox-macos-amd64.tar.gz   sftpbox && rm dist/sftpbox
-          build darwin  arm64 sftpbox
-          tar -C dist -czf dist/sftpbox-macos-arm64.tar.gz   sftpbox && rm dist/sftpbox
-          build windows amd64 sftpbox.exe
-          (cd dist && zip -q sftpbox-windows-amd64.zip sftpbox.exe) && rm dist/sftpbox.exe
+          build linux   amd64 remorasftp
+          tar -C dist -czf dist/remorasftp-linux-amd64.tar.gz   remorasftp && rm dist/remorasftp
+          build darwin  amd64 remorasftp
+          tar -C dist -czf dist/remorasftp-macos-amd64.tar.gz   remorasftp && rm dist/remorasftp
+          build darwin  arm64 remorasftp
+          tar -C dist -czf dist/remorasftp-macos-arm64.tar.gz   remorasftp && rm dist/remorasftp
+          build windows amd64 remorasftp.exe
+          (cd dist && zip -q remorasftp-windows-amd64.zip remorasftp.exe) && rm dist/remorasftp.exe
 
           (cd dist && sha256sum *.tar.gz *.zip > checksums.txt)
           ls -lh dist
@@ -103,10 +103,10 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
           ASSETS=(
-            dist/sftpbox-linux-amd64.tar.gz
-            dist/sftpbox-macos-amd64.tar.gz
-            dist/sftpbox-macos-arm64.tar.gz
-            dist/sftpbox-windows-amd64.zip
+            dist/remorasftp-linux-amd64.tar.gz
+            dist/remorasftp-macos-amd64.tar.gz
+            dist/remorasftp-macos-arm64.tar.gz
+            dist/remorasftp-windows-amd64.zip
             dist/checksums.txt
           )
           if gh release view "$TAG" >/dev/null 2>&1; then
