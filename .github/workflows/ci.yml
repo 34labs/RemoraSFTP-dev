@@ -16,8 +16,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build (web + Go) & test
+  # Linux job: web build + full Go verification (gofmt, build, vet, test).
+  web-and-go-linux:
+    name: Linux — web + Go
     runs-on: ubuntu-latest
 
     steps:
@@ -37,17 +38,17 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      # The web build MUST run before any Go compilation: internal/server
+      # embeds internal/server/webassets via //go:embed, and the SPA tests
+      # need a real index.html inside the embed tree. npm ci (not npm
+      # install) installs exactly the locked dependencies. `npm run build`
+      # already runs `tsc --noEmit && vite build`, so no separate
+      # typecheck step is needed.
       - name: Install web dependencies
         working-directory: web
         run: npm ci --no-audit --no-fund
 
-      # Build the embedded UI before compiling Go, because the server package
-      # uses //go:embed for internal/server/webassets.
-      - name: Type-check web UI
-        working-directory: web
-        run: npm run typecheck
-
-      - name: Build web UI
+      - name: Build web UI (includes TypeScript check)
         working-directory: web
         run: npm run build
 
@@ -72,3 +73,49 @@ jobs:
 
       - name: Test Go
         run: go test ./... -count=1
+
+  # Windows job: the exact verification that caught the Windows-only issues
+  # (POSIX permission bits, control-key bytes, embedded-asset serving). It
+  # is independent of the Linux job so a failure on either OS is diagnosed
+  # in its own log.
+  windows:
+    name: Windows — web + Go
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+
+      - name: Build web UI (includes TypeScript check)
+        working-directory: web
+        run: npm run build
+
+      - name: Verify embedded web assets
+        shell: bash
+        run: test -f internal/server/webassets/index.html
+
+      - name: Build Go
+        run: go build ./...
+
+      - name: Test Go
+        run: go test ./... -count=1
+
+      - name: Vet Go
+        run: go vet ./...
