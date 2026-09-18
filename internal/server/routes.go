@@ -42,10 +42,11 @@ func (s *Server) mux(auth *authState) {
 	mux.HandleFunc("/api/events", s.handleEvents)
 
 	// Embedded single-page application for everything else.
-	//go:embed captures webassets/ at compile time: if the frontend was not
-	// built (cd web && npm run build) before the Go binary was compiled,
-	// index.html is absent from the embed. That must be a loud, actionable
-	// 503 — not an opaque 404 that looks like a routing bug.
+	// The embed directive in assets.go captures webassets/ at compile
+	// time: if the frontend was not built (cd web && npm run build)
+	// before the Go binary was compiled, index.html is absent from the
+	// embed. That must be a loud, actionable 503 — not an opaque 404
+	// that looks like a routing bug.
 	assets, err := webAssets()
 	uiMissing := err != nil
 	if err == nil {
