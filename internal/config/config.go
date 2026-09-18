@@ -89,7 +89,7 @@ type Settings struct {
 	ShowHidden          bool   `json:"showHidden"`
 	ConfirmDeletes      bool   `json:"confirmDeletes"`
 	OpenBrowserOnStart  bool   `json:"openBrowserOnStart"`
-	StartupMode         string `json:"startupMode"` // "ask" | "browser" | "no-browser"
+	StartupMode         string `json:"startupMode"`         // "ask" | "browser" | "no-browser"
 	ConcurrentTransfers int    `json:"concurrentTransfers"` // worker count
 	RemoteAccess        bool   `json:"remoteAccess"`        // advanced: bind beyond loopback
 	ListenAddress       string `json:"listenAddress"`       // default "127.0.0.1"

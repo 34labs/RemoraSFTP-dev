@@ -316,10 +316,10 @@ type App struct {
 	rawOK bool
 	rawSt term.State
 
-	events  chan Event
-	stopCh  chan struct{}
-	quit    bool
-	readWG  sync.WaitGroup
+	events chan Event
+	stopCh chan struct{}
+	quit   bool
+	readWG sync.WaitGroup
 
 	mu      sync.Mutex
 	stack   []Screen
@@ -638,7 +638,7 @@ func (r *inputReader) feedNormal(b byte) {
 		0x16, 0x17, 0x18, 0x19, 0x1a:
 		// Ctrl+letter: control byte N (1..26) is Ctrl + (Nth letter),
 		// so 0x01 -> 'a', 0x03 -> 'c', 0x1a -> 'z'.
-		r.emitKey(Key{Action: KeyChar, Rune: rune(b-1+'a'), Ctrl: true})
+		r.emitKey(Key{Action: KeyChar, Rune: rune(b - 1 + 'a'), Ctrl: true})
 	default:
 		if b >= 0x20 {
 			r.emitKey(Key{Action: KeyChar, Rune: rune(b)})
@@ -747,8 +747,8 @@ func (r *inputReader) emitKey(k Key) {
 // Run starts the loop and blocks until the app quits. The terminal is always
 // restored before returning.
 func (a *App) Run() error {
-	a.writeRaw("\x1b[?1049h")                 // alternate screen buffer
-	a.writeRaw("\x1b[?25l")                   // hide cursor
+	a.writeRaw("\x1b[?1049h")                       // alternate screen buffer
+	a.writeRaw("\x1b[?25l")                         // hide cursor
 	a.writeRaw("\x1b[?1006h\x1b[?1000h\x1b[?2004h") // SGR mouse, press/release, bracketed paste
 
 	sigCh := make(chan os.Signal, 1)
@@ -777,8 +777,8 @@ func (a *App) Run() error {
 
 	defer func() {
 		a.writeRaw("\x1b[?1006l\x1b[?1000l\x1b[?2004l") // mouse/paste off
-		a.writeRaw("\x1b[0m\x1b[?25h")                 // reset, show cursor
-		a.writeRaw("\x1b[?1049l")                      // leave alternate screen (clears UI)
+		a.writeRaw("\x1b[0m\x1b[?25h")                  // reset, show cursor
+		a.writeRaw("\x1b[?1049l")                       // leave alternate screen (clears UI)
 		if a.rawOK {
 			_ = term.Restore(int(a.stdin.Fd()), &a.rawSt)
 		}
@@ -879,7 +879,7 @@ func (a *App) render() {
 	}
 	for y := 0; y < h; y++ {
 		buf.WriteString("\x1b[")
-		buf.WriteString(itoa(y+1))
+		buf.WriteString(itoa(y + 1))
 		buf.WriteString(";1H")
 		prevFg, prevBg, prevBold, prevRev := 999, 999, false, false
 		for x := 0; x < w; x++ {

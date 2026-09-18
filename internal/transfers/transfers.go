@@ -62,7 +62,7 @@ type Job struct {
 	From string `json:"from,omitempty"`
 	Name string `json:"name"`
 
-	LocalPath string `json:"localPath,omitempty"`
+	LocalPath  string    `json:"localPath,omitempty"`
 	Total      int64     `json:"total"`
 	Done       int64     `json:"done"`
 	Error      string    `json:"error,omitempty"`
@@ -772,7 +772,7 @@ func (p *partFile) Commit() error {
 		_ = os.RemoveAll(p.jobDir)
 		return err
 	}
-	if err := moveFile(p.part, p.final); err != nil {   // cross-fs safe
+	if err := moveFile(p.part, p.final); err != nil { // cross-fs safe
 		_ = os.Remove(p.part)
 		_ = os.RemoveAll(p.jobDir)
 		return err

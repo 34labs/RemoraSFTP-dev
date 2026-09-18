@@ -54,9 +54,9 @@ func Run(stdin, stdout *os.File) error {
 type engineKind int
 
 const (
-	engOff engineKind = iota
-	engOurs     // started by this TUI process
-	engExternal // started by another RemoraSFTP process
+	engOff      engineKind = iota
+	engOurs                // started by this TUI process
+	engExternal            // started by another RemoraSFTP process
 )
 
 // launcher is the shared state every screen acts on. All fields are only
