@@ -3,86 +3,105 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'                 # pushing OR creating-on-GitHub a tag vX.Y.Z triggers this
-  workflow_dispatch:          # optional manual runs
+      - 'v*'
+  workflow_dispatch:
     inputs:
       tag:
         description: 'Tag to build (e.g. v0.1.0)'
         required: true
-        default: 'v0.0.0'
+        default: 'v0.1.0'
 
 permissions:
   contents: write
-
-env:
-  GO_VERSION: '1.22'
-  NODE_VERSION: '20'
 
 jobs:
   release:
     name: Build binaries & publish release
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Resolve version tag
+      # Resolve and validate the tag BEFORE checkout so a manual run
+      # builds the requested tag, never the default branch.
+      - name: Resolve and validate release tag
         id: tag
+        shell: bash
         run: |
-          # For a tag push, GITHUB_REF_NAME is the tag (the commit the tag points at).
-          # checkout already placed the repo at that exact commit.
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG="${{ github.event.inputs.tag }}"
           else
             TAG="${GITHUB_REF_NAME}"
           fi
+          # Expected format: vMAJOR.MINOR.PATCH (optionally with a
+          # pre-release/build suffix, e.g. v1.0.0-rc.1).
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::invalid release tag '$TAG' (expected vMAJOR.MINOR.PATCH)"
+            exit 1
+          fi
           VERSION="${TAG#v}"
-          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building release: tag=$TAG  commit=${GITHUB_SHA}"
+          echo "Building release: tag=$TAG  version=$VERSION  commit=${GITHUB_SHA}"
 
-      - name: Detect module path and main package
-        id: mod
-        run: |
-          MODPATH="$(go list -m)"
-          MAINPKG="$(go list -f '{{if and (eq .Name "main") (not .ForTest)}}{{.ImportPath}}{{end}}' ./... \
-                     | grep -v '/thirdparty/' \
-                     | sed '/^$/d' | head -1)"
-          [ -z "$MAINPKG" ] && { echo "::error::no package main found"; exit 1; }
-          echo "module=$MODPATH  main=$MAINPKG"
-          echo "modpath=$MODPATH" >> "$GITHUB_OUTPUT"
-          echo "mainpkg=$MAINPKG" >> "$GITHUB_OUTPUT"
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          # For a tag push this is the tag itself; for workflow_dispatch it
+          # forces the requested tag instead of whatever ref the dispatch
+          # happened on. fetch-depth 0 makes the annotated tag resolvable.
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
 
-      - name: Build the embedded web UI
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # ---- verification: nothing is published until all of this passes ----
+      - name: Install web dependencies
         working-directory: web
-        run: |
-          npm ci || npm install --no-audit --no-fund
-          npx tsc --noEmit
-          npx vite build
+        run: npm ci --no-audit --no-fund
 
-      - name: Cross-compile binaries
+      - name: Build web UI (includes TypeScript check)
+        working-directory: web
+        run: npm run build
+
+      - name: Verify embedded web assets
+        run: test -f internal/server/webassets/index.html
+
+      - name: Test Go
+        run: go test ./... -count=1
+
+      - name: Vet Go
+        run: go vet ./...
+
+      - name: Build Go
+        run: go build ./...
+
+      # ---- artifacts ----
+      - name: Cross-compile binaries with version metadata
         env:
-          MOD: ${{ steps.mod.outputs.modpath }}
-          MAIN: ${{ steps.mod.outputs.mainpkg }}
           VERSION: ${{ steps.tag.outputs.version }}
           COMMIT: ${{ github.sha }}
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist
-          LDFLAGS="-X ${MOD}/internal/version.Version=${VERSION} \
-                   -X ${MOD}/internal/version.Commit=${COMMIT} \
-                   -X ${MOD}/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-X remorasftp/internal/version.Version=${VERSION} \
+                   -X remorasftp/internal/version.Commit=${COMMIT} \
+                   -X remorasftp/internal/version.BuildTime=${BUILD_TIME} \
                    -s -w"
+          MAIN=./cmd/remorasftp
+
+          mkdir -p dist
           build() { GOOS="$1" GOARCH="$2" go build -trimpath -ldflags "$LDFLAGS" -o "dist/$3" "$MAIN"; }
 
           build linux   amd64 remorasftp
@@ -94,14 +113,17 @@ jobs:
           build windows amd64 remorasftp.exe
           (cd dist && zip -q remorasftp-windows-amd64.zip remorasftp.exe) && rm dist/remorasftp.exe
 
-          (cd dist && sha256sum *.tar.gz *.zip > checksums.txt)
+          (cd dist && sha256sum remorasftp-*.tar.gz remorasftp-*.zip > checksums.txt)
           ls -lh dist
 
-      - name: Create or update GitHub Release
+      - name: Publish or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.tag.outputs.tag }}
+          COMMIT: ${{ github.sha }}
+        shell: bash
         run: |
+          set -euo pipefail
           ASSETS=(
             dist/remorasftp-linux-amd64.tar.gz
             dist/remorasftp-macos-amd64.tar.gz
@@ -109,10 +131,11 @@ jobs:
             dist/remorasftp-windows-amd64.zip
             dist/checksums.txt
           )
+          NOTES="RemoraSFTP ${TAG} — commit ${COMMIT}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG exists — replacing assets…"
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
             echo "Creating release $TAG…"
-            gh release create "$TAG" --title "SftpBox $TAG" --generate-notes "${ASSETS[@]}"
+            gh release create "$TAG" --title "RemoraSFTP $TAG" --notes "$NOTES" "${ASSETS[@]}"
           fi
