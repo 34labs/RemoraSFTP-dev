@@ -105,11 +105,19 @@ func TestCopyFileAndTree(t *testing.T) {
 	if snap.Status != StatusCompleted {
 		t.Fatalf("status = %s, err=%q", snap.Status, snap.Error)
 	}
+	// Regression: recursive copy destinations must be under /dst/src —
+	// the target variable in the directory branch must not be shadowed,
+	// which used to send every child to the filesystem root.
 	if string(fs.Read("/dst/src/a.txt")) != "alpha" {
-		t.Error("file a.txt not copied")
+		t.Error("file a.txt not copied to /dst/src/a.txt")
 	}
 	if string(fs.Read("/dst/src/sub/b.txt")) != "beta" {
-		t.Error("nested file b.txt not copied")
+		t.Error("nested file b.txt not copied to /dst/src/sub/b.txt")
+	}
+	for _, stray := range []string{"/a.txt", "/sub", "/b.txt"} {
+		if fs.Has(stray) {
+			t.Errorf("child copied to filesystem root: %s", stray)
+		}
 	}
 	// Source must survive a copy.
 	if !fs.Has("/src/a.txt") {
@@ -134,6 +142,9 @@ func TestMoveTreeRemovesSource(t *testing.T) {
 	}
 	if !fs.Has("/dst/src/a.txt") {
 		t.Error("moved file missing at destination")
+	}
+	if fs.Has("/a.txt") {
+		t.Error("moved child landed at filesystem root instead of /dst/src")
 	}
 	if fs.Has("/src/a.txt") {
 		t.Error("source file still present after move")

@@ -449,13 +449,20 @@ const (
 	pStateEsc
 	pStateCSI
 	pStateSS3
+	pStateEscPaste
 )
+
+// pasteTerminator is the bracketed-paste end marker (ESC [201 ~) with the
+// ESC excluded — the bytes that follow an ESC while pasting and must match
+// for the paste to end.
+const pasteTerminator = "[201~"
 
 type inputReader struct {
 	a         *App
 	state     int
 	params    []byte
 	pasteMode bool
+	pasteBuf  []byte // bytes after an ESC seen inside a paste (terminator match)
 }
 
 // readLoop consumes raw terminal input and enqueues events. It terminates
@@ -525,6 +532,35 @@ func (r *inputReader) flushEsc() {
 	}
 }
 
+// feedEscPaste consumes bytes after an ESC seen inside a bracketed paste.
+// If they spell the paste terminator ("[201~"), paste mode ends and the
+// whole sequence is consumed. Otherwise the ESC was literal paste content:
+// the buffered bytes are emitted as pasted characters and the current byte
+// is reprocessed in normal paste mode.
+func (r *inputReader) feedEscPaste(b byte) {
+	if len(r.pasteBuf) < len(pasteTerminator) && pasteTerminator[len(r.pasteBuf)] == b {
+		// Still a prefix of the terminator.
+		r.pasteBuf = append(r.pasteBuf, b)
+		if string(r.pasteBuf) == pasteTerminator {
+			r.pasteBuf = r.pasteBuf[:0]
+			r.pasteMode = false
+			r.state = pStateNormal
+		}
+		return
+	}
+	// Not the terminator: the ESC and the buffered bytes were literal
+	// paste content — emit the buffered bytes as pasted text and
+	// reprocess the deciding byte in normal paste mode.
+	for _, c := range r.pasteBuf {
+		if c >= 0x20 && c != 0x7f {
+			r.emitKey(Key{Action: KeyChar, Rune: rune(c)})
+		}
+	}
+	r.pasteBuf = r.pasteBuf[:0]
+	r.state = pStateNormal
+	r.feed(b)
+}
+
 func (r *inputReader) feed(b byte) {
 	switch r.state {
 	case pStateNormal:
@@ -546,6 +582,8 @@ func (r *inputReader) feed(b byte) {
 			r.emitKey(Key{Action: KeyEsc})
 			r.feed(b)
 		}
+	case pStateEscPaste:
+		r.feedEscPaste(b)
 	case pStateSS3:
 		r.state = pStateNormal
 		switch b {
@@ -569,6 +607,15 @@ func (r *inputReader) feed(b byte) {
 
 func (r *inputReader) feedNormal(b byte) {
 	if r.pasteMode {
+		if b == 0x1b {
+			// The paste can only end with the bracketed-paste terminator
+			// (ESC[201~). Track potential terminators explicitly instead of
+			// dropping the ESC, or "[201~" would leak into pasted text and
+			// paste mode would never turn off.
+			r.pasteBuf = r.pasteBuf[:0]
+			r.state = pStateEscPaste
+			return
+		}
 		if b >= 0x20 && b != 0x7f {
 			r.emitKey(Key{Action: KeyChar, Rune: rune(b)})
 		}
@@ -589,8 +636,9 @@ func (r *inputReader) feedNormal(b byte) {
 		0x0e, 0x0f,
 		0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
 		0x16, 0x17, 0x18, 0x19, 0x1a:
-		// Ctrl+letter.
-		r.emitKey(Key{Action: KeyChar, Rune: rune(b-'@'+'a'), Ctrl: true})
+		// Ctrl+letter: control byte N (1..26) is Ctrl + (Nth letter),
+		// so 0x01 -> 'a', 0x03 -> 'c', 0x1a -> 'z'.
+		r.emitKey(Key{Action: KeyChar, Rune: rune(b-1+'a'), Ctrl: true})
 	default:
 		if b >= 0x20 {
 			r.emitKey(Key{Action: KeyChar, Rune: rune(b)})

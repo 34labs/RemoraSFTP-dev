@@ -203,7 +203,12 @@ func (tm *Manager) copyOne(ctx context.Context, cl protocol.Client, from, to str
 	var target string
 	switch {
 	case dstErr != nil:
-		target, _, _, rerr := tm.resolveDest(ctx, cl, to, policy)
+		// Assignment (not ':='): a short declaration here would create a
+		// new inner `target` that shadows the outer one, leaving the
+		// outer value empty and copying every child to the filesystem
+		// root. rerr stays scoped to this case.
+		var rerr error
+		target, _, _, rerr = tm.resolveDest(ctx, cl, to, policy)
 		if rerr != nil {
 			st.addErr(rerr.Error())
 			return nil

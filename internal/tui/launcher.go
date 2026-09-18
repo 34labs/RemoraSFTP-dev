@@ -328,13 +328,19 @@ func titleBar(c *Canvas, title, sub string) {
 	c.HRule(2, 2, c.w-4, Style{FG: ColBorder, BG: ColBg})
 }
 
-// rowAt maps a mouse click to a row index (or -1).
+// rowAt maps a mouse click to a row index (or -1). Rows are drawn at
+// y0 + i*rowH; row i covers the lines [y0+i*rowH, y0+(i+1)*rowH), except
+// the last row, which covers only its own text line (y0+(count-1)*rowH) —
+// the trailing gap below the last row belongs to no row.
 func rowAt(mx, my, y0, rowH int, count int) int {
-	if my < y0 {
+	if my < y0 || count <= 0 {
+		return -1
+	}
+	if my > y0+(count-1)*rowH {
 		return -1
 	}
 	idx := (my - y0) / rowH
-	if idx < 0 || idx >= count {
+	if idx >= count {
 		return -1
 	}
 	return idx
