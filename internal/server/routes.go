@@ -29,6 +29,13 @@ func (s *Server) mux(auth *authState) {
 	mux.HandleFunc("/api/transfers", s.handleTransfers)
 	mux.HandleFunc("/api/transfers/", s.handleTransferItem)
 
+	mux.HandleFunc("/api/favorites", s.handleFavorites)
+	mux.HandleFunc("/api/favorites/", s.handleFavoriteItem)
+	mux.HandleFunc("/api/recents", s.handleRecents)
+
+	mux.HandleFunc("/api/local", s.handleLocal)
+	mux.HandleFunc("/api/local/", s.handleLocal)
+
 	mux.HandleFunc("/api/events", s.handleEvents)
 
 	// Embedded single-page application for everything else.
