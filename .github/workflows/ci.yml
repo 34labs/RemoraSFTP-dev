@@ -2,49 +2,73 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches:
+      - main
+      - master
+      - 'arena/**'
   pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     name: Build (web + Go) & test
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
+          cache: true
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
-      # --- Build the embedded UI FIRST, otherwise //go:embed has nothing ---
-      - name: Build web UI (populates internal/server/webassets)
+      - name: Install web dependencies
         working-directory: web
-        run: |
-          npm ci || npm install --no-audit --no-fund
-          npx tsc --noEmit
-          npx vite build
+        run: npm ci --no-audit --no-fund
 
-      # Now the embedded assets exist, so the Go binary can compile.
-      - name: Build
-        run: go build ./...
+      # Build the embedded UI before compiling Go, because the server package
+      # uses //go:embed for internal/server/webassets.
+      - name: Type-check web UI
+        working-directory: web
+        run: npm run typecheck
 
-      - name: Vet
-        run: go vet ./...
+      - name: Build web UI
+        working-directory: web
+        run: npm run build
+
+      - name: Verify embedded web assets
+        run: test -f internal/server/webassets/index.html
 
       - name: Gofmt check
+        shell: bash
         run: |
-          out="$(gofmt -l .)"
+          out="$(git ls-files -z -- '*.go' | xargs -0 gofmt -l)"
           if [ -n "$out" ]; then
             echo "These files need gofmt:"
             echo "$out"
             exit 1
           fi
 
-      - name: Test
+      - name: Build Go
+        run: go build ./...
+
+      - name: Vet Go
+        run: go vet ./...
+
+      - name: Test Go
         run: go test ./... -count=1
