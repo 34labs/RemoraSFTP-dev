@@ -17,6 +17,7 @@ var embedded embed.FS
 func webAssets() (fs.FS, error) {
 	return fs.Sub(embedded, "webassets")
 }
+
 // cspForApp is the restrictive Content-Security-Policy applied to the app
 // shell. Everything (scripts, styles, workers) is served from the loopback
 // origin itself; no remote origins are allowed.
