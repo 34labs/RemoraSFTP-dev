@@ -172,10 +172,10 @@ func TestScreenStack(t *testing.T) {
 
 type stubScreen struct{}
 
-func (s *stubScreen) Draw(*Canvas)          {}
-func (s *stubScreen) Key(*App, Key) bool    { return false }
+func (s *stubScreen) Draw(*Canvas)                {}
+func (s *stubScreen) Key(*App, Key) bool          { return false }
 func (s *stubScreen) Mouse(*App, MouseEvent) bool { return false }
-func (s *stubScreen) Tick(*App)             {}
+func (s *stubScreen) Tick(*App)                   {}
 
 func TestCanvasTextAndEllipsis(t *testing.T) {
 	c := newCanvas(20, 5)

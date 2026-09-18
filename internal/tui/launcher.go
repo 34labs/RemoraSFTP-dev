@@ -503,8 +503,7 @@ func (m *mainMenu) activate(a *App, idx int) {
 // the explicit confirmation for binding beyond loopback.
 func (l *launcher) doStart(openBrowser bool) {
 	if l.kind == engExternal {
-		l.a.SetScreen(&errorScreen{l: l, msg:
-			fmt.Sprintf("Another RemoraSFTP engine is already running (PID %d) at %s.\n\nStop that process first, then start again from here.", l.extPID, l.extURL)})
+		l.a.SetScreen(&errorScreen{l: l, msg: fmt.Sprintf("Another RemoraSFTP engine is already running (PID %d) at %s.\n\nStop that process first, then start again from here.", l.extPID, l.extURL)})
 		return
 	}
 	_, _, beyond := l.listenPlan()
@@ -518,7 +517,7 @@ func (l *launcher) doStart(openBrowser bool) {
 	if beyond {
 		l.a.Push(&confirmScreen{
 			title: "Bind beyond loopback?",
-			body: "Settings request binding the local API beyond loopback.\n\nThis exposes the local API to your network. Continue only if you understand the consequences (docs/security.md).",
+			body:  "Settings request binding the local API beyond loopback.\n\nThis exposes the local API to your network. Continue only if you understand the consequences (docs/security.md).",
 			onYes: begin,
 		})
 		return
@@ -1047,7 +1046,7 @@ func (s *connectionsScreen) duplicate(id string) {
 func (s *connectionsScreen) delete(c *config.Connection) {
 	s.l.a.Push(&confirmScreen{
 		title: "Delete connection?",
-		body: fmt.Sprintf("“%s” (%s://%s:%d)\n\nStored credentials for this profile are also removed from the credential vault.", c.Name, c.Protocol, c.Host, c.Port),
+		body:  fmt.Sprintf("“%s” (%s://%s:%d)\n\nStored credentials for this profile are also removed from the credential vault.", c.Name, c.Protocol, c.Host, c.Port),
 		onYes: func() {
 			if err := s.l.eng.Manager.DeleteProfile(c.ID); err != nil {
 				s.setStatus("Delete failed: "+err.Error(), ColErr, false)
@@ -1206,8 +1205,8 @@ func newEditConnectionScreen(l *launcher, id string) *editConnectionScreen {
 	user := p.Username
 	dir := p.StartDir
 	return &editConnectionScreen{
-		l:      l,
-		id:     id,
+		l:  l,
+		id: id,
 		fields: []editField{
 			{label: "Name", value: &name},
 			{label: "Protocol", value: &proto, isProto: true},
@@ -1471,7 +1470,9 @@ func (s *settingsScreen) rows() []settingRow {
 		},
 		{
 			label: "Default view", value: st.DefaultView,
-			onEnter: func() { set(func(ss *config.Settings) { ss.DefaultView = cycle(st.DefaultView, "details", "list", "icons") }) },
+			onEnter: func() {
+				set(func(ss *config.Settings) { ss.DefaultView = cycle(st.DefaultView, "details", "list", "icons") })
+			},
 		},
 		{
 			label: "Show hidden files", value: onOff(&st.ShowHidden),
@@ -1487,7 +1488,9 @@ func (s *settingsScreen) rows() []settingRow {
 		},
 		{
 			label: "Startup behavior", value: st.StartupMode,
-			onEnter: func() { set(func(ss *config.Settings) { ss.StartupMode = cycle(st.StartupMode, "ask", "browser", "no-browser") }) },
+			onEnter: func() {
+				set(func(ss *config.Settings) { ss.StartupMode = cycle(st.StartupMode, "ask", "browser", "no-browser") })
+			},
 		},
 		{
 			label: "Concurrent transfers", value: fmt.Sprintf("%d", st.ConcurrentTransfers),
@@ -1503,7 +1506,9 @@ func (s *settingsScreen) rows() []settingRow {
 		},
 		{
 			label: "Log level", value: st.LogLevel,
-			onEnter: func() { set(func(ss *config.Settings) { ss.LogLevel = cycle(st.LogLevel, "off", "error", "warning", "info") }) },
+			onEnter: func() {
+				set(func(ss *config.Settings) { ss.LogLevel = cycle(st.LogLevel, "off", "error", "warning", "info") })
+			},
 		},
 		{
 			label: "Reduce motion", value: onOff(&st.ReducedMotion),
@@ -1511,7 +1516,7 @@ func (s *settingsScreen) rows() []settingRow {
 		},
 		{
 			label: "Allow remote access", value: onOff(&st.RemoteAccess),
-			onEnter: func() { set(func(ss *config.Settings) { ss.RemoteAccess = !st.RemoteAccess }) },
+			onEnter:   func() { set(func(ss *config.Settings) { ss.RemoteAccess = !st.RemoteAccess }) },
 			warnAfter: true,
 		},
 	}

@@ -1,7 +1,7 @@
 // Package tui implements the native terminal launcher / control center of
 // RemoraSFTP.
 //
-// Design notes
+// # Design notes
 //
 // The launcher is a deliberately small, dependency-free TUI framework: a
 // raw-mode input reader (keyboard + SGR mouse + bracketed paste), a
@@ -344,14 +344,14 @@ func NewApp(stdin, stdout *os.File) (*App, error) {
 		return nil, err
 	}
 	return &App{
-		stdin:   stdin,
-		stdout:  stdout,
-		rawOK:   true,
-		rawSt:   *st,
-		events:  make(chan Event, 64),
-		stopCh:  make(chan struct{}),
-		width:   w,
-		height:  h,
+		stdin:  stdin,
+		stdout: stdout,
+		rawOK:  true,
+		rawSt:  *st,
+		events: make(chan Event, 64),
+		stopCh: make(chan struct{}),
+		width:  w,
+		height: h,
 	}, nil
 }
 
