@@ -1,4 +1,4 @@
-package manager
+package transfers
 
 import (
 	"context"
@@ -12,7 +12,6 @@ import (
 	"remorasftp/internal/apppaths"
 	"remorasftp/internal/protocol"
 	"remorasftp/internal/safepath"
-	"remorasftp/internal/transfers"
 )
 
 // StartCopy queues a recursive copy (or move) of remote path `from` to
@@ -20,15 +19,18 @@ import (
 // through the protocol client (the single filesystem implementation);
 // files are staged in isolated temp artifacts that are always removed.
 //
-// tm is the process transfer manager (the single transfer subsystem); it is
-// passed in because transfers.Manager already imports this package.
+// This orchestration lives in the transfers package (not manager) because
+// the job/queue it enqueues onto belong to the transfer subsystem, and
+// transfers already depends on manager — the reverse would be an import
+// cycle. It reaches the session's protocol client and metadata through the
+// engine manager held by the transfer manager.
 //
 // Guards (invalid operations are rejected up front):
 //   - destination equal to or inside the source (folder into itself),
 //   - missing destination parent folder.
-func (m *Manager) StartCopy(ctx context.Context, sessionID, from, to string, move bool, policy protocol.CopyPolicy, tm *transfers.Manager) (*transfers.Job, error) {
-	if tm == nil {
-		return nil, fmt.Errorf("transfer manager is not available")
+func (tm *Manager) StartCopy(ctx context.Context, sessionID, from, to string, move bool, policy protocol.CopyPolicy) (*Job, error) {
+	if tm.mgr == nil {
+		return nil, fmt.Errorf("transfer manager is not attached to the engine")
 	}
 	from = safepath.Clean(from)
 	to = safepath.Clean(to)
@@ -38,7 +40,7 @@ func (m *Manager) StartCopy(ctx context.Context, sessionID, from, to string, mov
 	if safepath.Within(from, to) {
 		return nil, fmt.Errorf("destination is inside the source: cannot copy a folder into itself")
 	}
-	cl, err := m.Client(sessionID)
+	cl, err := tm.mgr.Client(sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -54,16 +56,16 @@ func (m *Manager) StartCopy(ctx context.Context, sessionID, from, to string, mov
 		}
 	}
 
-	sess, err := m.Sessions0(sessionID)
+	sess, err := tm.mgr.Sessions0(sessionID)
 	if err != nil {
 		return nil, err
 	}
 
-	direction := transfers.Copy
+	direction := Copy
 	if move {
-		direction = transfers.Move
+		direction = Move
 	}
-	job := &transfers.Job{
+	job := &Job{
 		Direction:  direction,
 		SessionID:  sessionID,
 		ConnName:   sess.ConnName,
@@ -82,7 +84,7 @@ func (m *Manager) StartCopy(ctx context.Context, sessionID, from, to string, mov
 		}
 	}
 	j := tm.EnqueueOperation(job, func(opCtx context.Context, prog protocol.ProgressFunc) error {
-		return m.copyRecursive(opCtx, cl, from, to, move, policy, prog)
+		return tm.copyRecursive(opCtx, cl, from, to, move, policy, prog)
 	})
 	return j, nil
 }
@@ -117,10 +119,10 @@ func (o *opProgress) advance(b int64) { o.base += b }
 
 // copyRecursive copies the tree. Symlinked entries are never followed (and
 // are skipped in tree copies). Returns a context error when canceled.
-func (m *Manager) copyRecursive(ctx context.Context, cl protocol.Client, from, to string, move bool, policy protocol.CopyPolicy, prog protocol.ProgressFunc) error {
+func (tm *Manager) copyRecursive(ctx context.Context, cl protocol.Client, from, to string, move bool, policy protocol.CopyPolicy, prog protocol.ProgressFunc) error {
 	stats := &copyStats{}
 	op := &opProgress{prog: prog}
-	if err := m.copyOne(ctx, cl, from, to, move, policy, op, stats); err != nil {
+	if err := tm.copyOne(ctx, cl, from, to, move, policy, op, stats); err != nil {
 		return err
 	}
 	if len(stats.errs) > 0 {
@@ -129,7 +131,7 @@ func (m *Manager) copyRecursive(ctx context.Context, cl protocol.Client, from, t
 	return nil
 }
 
-func (m *Manager) copyOne(ctx context.Context, cl protocol.Client, from, to string, move bool, policy protocol.CopyPolicy, op *opProgress, st *copyStats) error {
+func (tm *Manager) copyOne(ctx context.Context, cl protocol.Client, from, to string, move bool, policy protocol.CopyPolicy, op *opProgress, st *copyStats) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -159,7 +161,7 @@ func (m *Manager) copyOne(ctx context.Context, cl protocol.Client, from, to stri
 			st.addErr("destination is a folder: " + to)
 			return nil
 		}
-		target, _, skip, rerr := m.resolveDest(ctx, cl, to, policy)
+		target, _, skip, rerr := tm.resolveDest(ctx, cl, to, policy)
 		if rerr != nil {
 			st.addErr(rerr.Error())
 			return nil
@@ -168,7 +170,7 @@ func (m *Manager) copyOne(ctx context.Context, cl protocol.Client, from, to stri
 			st.skipped++
 			return nil
 		}
-		if err := m.copyFile(ctx, cl, from, target, src.Size, op); err != nil {
+		if err := tm.copyFile(ctx, cl, from, target, src.Size, op); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -189,7 +191,7 @@ func (m *Manager) copyOne(ctx context.Context, cl protocol.Client, from, to stri
 	var target string
 	switch {
 	case dstErr != nil:
-		target, _, _, rerr := m.resolveDest(ctx, cl, to, policy)
+		target, _, _, rerr := tm.resolveDest(ctx, cl, to, policy)
 		if rerr != nil {
 			st.addErr(rerr.Error())
 			return nil
@@ -208,7 +210,7 @@ func (m *Manager) copyOne(ctx context.Context, cl protocol.Client, from, to stri
 			st.addErr("destination folder already exists: " + to)
 			return nil
 		case protocol.PolicyRename:
-			t := m.uniqueDest(ctx, cl, to)
+			t := tm.uniqueDest(ctx, cl, to)
 			if err := cl.Mkdir(ctx, t); err != nil {
 				st.addErr("mkdir " + t + ": " + err.Error())
 				return nil
@@ -225,7 +227,7 @@ func (m *Manager) copyOne(ctx context.Context, cl protocol.Client, from, to stri
 			return nil
 		}
 		if policy == protocol.PolicyRename {
-			t := m.uniqueDest(ctx, cl, to)
+			t := tm.uniqueDest(ctx, cl, to)
 			if err := cl.Mkdir(ctx, t); err != nil {
 				st.addErr("mkdir " + t + ": " + err.Error())
 				return nil
@@ -251,13 +253,13 @@ func (m *Manager) copyOne(ctx context.Context, cl protocol.Client, from, to stri
 		if e.Type == protocol.EntryDir && !e.IsSymlink {
 			// Recurse with merge semantics (childTo inside existing
 			// directory merges naturally).
-			if err := m.copyOne(ctx, cl, childFrom, childTo, move, policy, op, st); err != nil {
+			if err := tm.copyOne(ctx, cl, childFrom, childTo, move, policy, op, st); err != nil {
 				return err
 			}
 		} else if e.Type == protocol.EntrySymlink || e.IsSymlink {
 			st.skipped++
 		} else {
-			if err := m.copyOne(ctx, cl, childFrom, childTo, move, policy, op, st); err != nil {
+			if err := tm.copyOne(ctx, cl, childFrom, childTo, move, policy, op, st); err != nil {
 				return err
 			}
 		}
@@ -275,7 +277,7 @@ func (m *Manager) copyOne(ctx context.Context, cl protocol.Client, from, to stri
 // copyFile streams one file remote → isolated temp file → remote. Progress
 // is reported through op (download phase 0..size, upload phase size..2size,
 // offset so the global total keeps advancing).
-func (m *Manager) copyFile(ctx context.Context, cl protocol.Client, from, to string, size int64, op *opProgress) error {
+func (tm *Manager) copyFile(ctx context.Context, cl protocol.Client, from, to string, size int64, op *opProgress) error {
 	tmp, err := apppaths.TempDir()
 	if err != nil {
 		return err
@@ -332,7 +334,7 @@ func (o *offsetReader) Read(p []byte) (int, error) {
 }
 
 // resolveDest decides what to do when `to` already exists.
-func (m *Manager) resolveDest(ctx context.Context, cl protocol.Client, to string, policy protocol.CopyPolicy) (target string, action string, skip bool, err error) {
+func (tm *Manager) resolveDest(ctx context.Context, cl protocol.Client, to string, policy protocol.CopyPolicy) (target string, action string, skip bool, err error) {
 	if _, err := cl.Stat(ctx, to); err != nil {
 		return to, "new", false, nil
 	}
@@ -344,13 +346,13 @@ func (m *Manager) resolveDest(ctx context.Context, cl protocol.Client, to string
 	case protocol.PolicySkip:
 		return "", "", true, nil
 	case protocol.PolicyRename:
-		return m.uniqueDest(ctx, cl, to), "rename", false, nil
+		return tm.uniqueDest(ctx, cl, to), "rename", false, nil
 	}
 	return to, "new", false, nil
 }
 
 // uniqueDest returns a non-colliding path: "name (1).ext", "name (2).ext", …
-func (m *Manager) uniqueDest(ctx context.Context, cl protocol.Client, to string) string {
+func (tm *Manager) uniqueDest(ctx context.Context, cl protocol.Client, to string) string {
 	dir, base := safepath.Split(to)
 	ext := path.Ext(base)
 	name := strings.TrimSuffix(base, ext)

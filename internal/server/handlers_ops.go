@@ -39,7 +39,7 @@ func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request, sessionID st
 		writeErr(w, http.StatusBadRequest, "invalid policy")
 		return
 	}
-	job, err := s.mgr.StartCopy(r.Context(), sessionID, req.From, req.To, req.Move, policy, s.tm)
+	job, err := s.tm.StartCopy(r.Context(), sessionID, req.From, req.To, req.Move, policy)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
