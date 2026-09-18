@@ -130,7 +130,7 @@ func TestConnectionProfileDoesNotLeakSecret(t *testing.T) {
 	do := func(method, path, body string) *http.Response {
 		req, _ := http.NewRequest(method, base+path, strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("X-Requested-With", "SftpBox") // required for non-GET
+		req.Header.Set("X-Requested-With", "RemoraSFTP") // required for non-GET
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {

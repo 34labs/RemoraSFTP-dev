@@ -167,7 +167,10 @@ func (l *launcher) startEngine(openBrowser bool) error {
 	if err != nil {
 		return err
 	}
-	addr, port := l.listenPlan()
+	// The beyond-loopback flag (third value) is intentionally not used
+	// here: callers that start from user input (doStart) already enforce
+	// the explicit confirmation before reaching this point.
+	addr, port, _ := l.listenPlan()
 	if err := eng.Start(addr, port); err != nil {
 		return err
 	}
@@ -718,7 +721,7 @@ func (s *errorScreen) Draw(c *Canvas) {
 		return
 	}
 	c.Box(0, 0, c.w, c.h, Style{FG: ColBorder, BG: ColBg})
-	titleBar(c, "Problem")
+	titleBar(c, "Problem", "an action failed — details below")
 	lines := wrapText(s.msg, c.w-8)
 	y := 4
 	for _, ln := range lines {
@@ -1074,7 +1077,11 @@ func (s *trustScreen) Draw(c *Canvas) {
 		return
 	}
 	c.Box(0, 0, c.w, c.h, Style{FG: ColBorder, BG: ColBg})
-	titleBar(c, "Verify server identity")
+	trustSub := "unknown SSH host key — review the fingerprint"
+	if s.kind != "ssh" {
+		trustSub = "untrusted TLS certificate — review the fingerprint"
+	}
+	titleBar(c, "Verify server identity", trustSub)
 	y := 4
 	var lines []string
 	if s.kind == "ssh" {
@@ -1684,7 +1691,7 @@ func (s *aboutScreen) Draw(c *Canvas) {
 	}
 	info := version.Get()
 	c.Box(0, 0, c.w, c.h, Style{FG: ColBorder, BG: ColBg})
-	titleBar(c, "About RemoraSFTP")
+	titleBar(c, "About RemoraSFTP", "version and build information")
 	lines := []string{
 		"RemoraSFTP — a local-first browser file manager for FTP, FTPS, and SFTP.",
 		"",
