@@ -1,8 +1,8 @@
 <div align="center">
 
-# RemoraSFTP
-
 ![RemoraSFTP Logo](./docs/RemoraSFTP.jpg)
+
+# 🐟 RemoraSFTP
 
 **A local-first browser file manager for FTP, FTPS, and SFTP.**
 
