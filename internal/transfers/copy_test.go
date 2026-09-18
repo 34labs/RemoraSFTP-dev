@@ -2,6 +2,7 @@ package transfers
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -260,5 +261,57 @@ func TestCopyFolderPolicies(t *testing.T) {
 	}
 	if !strings.Contains(snap.Error, "already exists") {
 		t.Errorf("expected a conflict note, got %q", snap.Error)
+	}
+}
+
+// droppingClient is a FakeFS whose Upload pretends to succeed without
+// writing anything. It simulates a transport that silently loses data; an
+// operation using it must fail loudly, never report success.
+type droppingClient struct {
+	*protocoltest.FakeFS
+}
+
+func (c droppingClient) Upload(_ context.Context, _ string, r io.Reader, _ int64, _ protocol.ProgressFunc) error {
+	_, _ = io.ReadAll(r)
+	return nil
+}
+
+func TestCopyFailsWhenDestinationMissing(t *testing.T) {
+	fs := protocoltest.NewFakeFS()
+	fs.Add("/src/a.txt", false, []byte("alpha"))
+	fs.Add("/dst", true, nil)
+
+	dir := t.TempDir()
+	apppaths.SetDir(dir)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds, err := credentials.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, err := trust.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bus := events.NewBus(dir, "off")
+	mgr := manager.New(cfg, creds, tr, bus)
+	tm := New(bus, mgr, 2)
+	mgr.InjectTestSession("sess", manager.TestSession{
+		ConnID: "test-conn", ConnName: "Test", Protocol: config.ProtoSFTP,
+		Host: "fake", StartDir: "/", Client: droppingClient{fs}, ConnectedAt: time.Now(),
+	})
+
+	job, err := tm.StartCopy(context.Background(), "sess", "/src/a.txt", "/dst/a.txt", false, protocol.PolicyRefuse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := waitJob(t, tm, job.ID)
+	if snap.Status != StatusFailed {
+		t.Fatalf("silent data loss must fail the job, got status %q", snap.Status)
+	}
+	if !strings.Contains(snap.Error, "destination missing") {
+		t.Errorf("expected a destination-missing error, got %q", snap.Error)
 	}
 }

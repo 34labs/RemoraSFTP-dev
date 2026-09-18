@@ -111,6 +111,11 @@ func (q SearchQuery) matches(name, ext string) bool {
 		}
 	}
 	if q.Extension != "" {
+		// Normalize a missing leading dot so the method is self-contained
+		// (Search already normalizes the query extension before calling).
+		if ext != "" && !strings.HasPrefix(ext, ".") {
+			ext = "." + ext
+		}
 		e := path.Ext(name)
 		if !q.CaseSensitive {
 			e = strings.ToLower(e)

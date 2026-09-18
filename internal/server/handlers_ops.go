@@ -347,7 +347,7 @@ func (s *Server) handleLocal(w http.ResponseWriter, r *http.Request) {
 		if size > 0 {
 			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		}
-		_ = http.ServeContent(w, r, name, time.Now(), f)
+		http.ServeContent(w, r, name, time.Now(), f)
 		return
 	case "upload":
 		if r.Method != http.MethodPost {

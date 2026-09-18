@@ -119,6 +119,11 @@ func (o *opProgress) advance(b int64) { o.base += b }
 
 // copyRecursive copies the tree. Symlinked entries are never followed (and
 // are skipped in tree copies). Returns a context error when canceled.
+//
+// A completed operation is verified against the destination before being
+// reported successful: the destination must exist (a skipped-only operation
+// is the sole exception). This makes "finished but nothing landed" a loud
+// failure instead of a silent success.
 func (tm *Manager) copyRecursive(ctx context.Context, cl protocol.Client, from, to string, move bool, policy protocol.CopyPolicy, prog protocol.ProgressFunc) error {
 	stats := &copyStats{}
 	op := &opProgress{prog: prog}
@@ -127,6 +132,13 @@ func (tm *Manager) copyRecursive(ctx context.Context, cl protocol.Client, from, 
 	}
 	if len(stats.errs) > 0 {
 		return fmt.Errorf("%d issue(s): %s", len(stats.errs), strings.Join(stats.errs, "; "))
+	}
+	// Verify the destination actually exists before reporting success
+	// (unless every item was explicitly skipped or renamed elsewhere).
+	if stats.items > 0 {
+		if _, err := cl.Stat(ctx, to); err != nil {
+			return fmt.Errorf("destination missing after operation: %s (%v)", to, err)
+		}
 	}
 	return nil
 }
@@ -303,15 +315,26 @@ func (tm *Manager) copyFile(ctx context.Context, cl protocol.Client, from, to st
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	// A non-empty source must produce a non-empty staged file; anything
+	// else means the download side lost data silently.
+	if size > 0 {
+		if info, serr := os.Stat(part); serr != nil || info.Size() == 0 {
+			return fmt.Errorf("staged file is empty after download of non-empty source: %s", from)
+		}
+	}
 	op.advance(size)
 
 	f, err = os.Open(part)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 	up := &opProgress{prog: op.report}
 	err = cl.Upload(ctx, to, &offsetReader{r: f, report: up.report}, 0, nil)
+	// Close explicitly (and account for its error) so the handle is
+	// definitely released before jobDir cleanup on every platform.
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
 	op.advance(size)
 	return err
 }

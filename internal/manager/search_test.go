@@ -106,17 +106,63 @@ func TestSearch(t *testing.T) {
 	}
 }
 
+// TestSearchQueryMatches pins the match semantics:
+//   - CaseSensitive=false (the default, matching the search UI) is
+//     case-insensitive;
+//   - StartsWith=true does prefix matching (a non-prefix substring does not
+//     match);
+//   - extension matching respects CaseSensitive;
+//   - an extension without a leading dot is normalized;
+//   - when both a query and an extension are given, both must match.
 func TestSearchQueryMatches(t *testing.T) {
-	q := SearchQuery{Query: "read", StartsWith: true}
-	if !q.matches("readme.txt", "") || q.matches("README.md", "") {
-		t.Error("startsWith/case behavior wrong")
+	cases := []struct {
+		name string
+		q    SearchQuery
+		file string
+		ext  string // the query extension, as Search passes it to matches
+		want bool
+	}{
+		// Case-sensitive prefix.
+		{"case-sensitive prefix match", SearchQuery{Query: "read", StartsWith: true, CaseSensitive: true}, "readme.txt", "", true},
+		{"case-sensitive prefix case mismatch", SearchQuery{Query: "read", StartsWith: true, CaseSensitive: true}, "README.md", "", false},
+		{"case-sensitive prefix not a prefix", SearchQuery{Query: "read", StartsWith: true, CaseSensitive: true}, "unread.md", "", false},
+
+		// Case-insensitive prefix (default).
+		{"case-insensitive prefix match", SearchQuery{Query: "read", StartsWith: true}, "readme.txt", "", true},
+		{"case-insensitive prefix case variant", SearchQuery{Query: "read", StartsWith: true}, "README.md", "", true},
+		{"case-insensitive prefix not a prefix", SearchQuery{Query: "read", StartsWith: true}, "unread.md", "", false},
+		{"case-insensitive prefix query case variant", SearchQuery{Query: "READ", StartsWith: true}, "README.md", "", true},
+
+		// Substring (StartsWith=false).
+		{"substring match", SearchQuery{Query: "app"}, "my-app.js", "", true},
+		{"substring case-insensitive", SearchQuery{Query: "APP"}, "my-app.js", "", true},
+
+		// Case-sensitive extension.
+		{"case-sensitive extension match", SearchQuery{Extension: ".txt", CaseSensitive: true}, "a.txt", ".txt", true},
+		{"case-sensitive extension case mismatch", SearchQuery{Extension: ".txt", CaseSensitive: true}, "a.TXT", ".txt", false},
+		{"case-sensitive extension different ext", SearchQuery{Extension: ".txt", CaseSensitive: true}, "a.tar", ".txt", false},
+
+		// Case-insensitive extension (default).
+		{"case-insensitive extension match", SearchQuery{Extension: ".txt"}, "a.TXT", ".txt", true},
+		{"case-insensitive extension different ext", SearchQuery{Extension: ".txt"}, "a.tar", ".txt", false},
+
+		// Extension without a leading dot is normalized.
+		{"extension without leading dot normalized", SearchQuery{Extension: "txt"}, "a.txt", "txt", true},
+		{"extension without leading dot normalized no match", SearchQuery{Extension: "txt"}, "a.tar", "txt", false},
+
+		// Query + extension: both must match.
+		{"query and extension both match", SearchQuery{Query: "a", Extension: ".txt"}, "a.txt", ".txt", true},
+		{"query matches extension does not", SearchQuery{Query: "a", Extension: ".txt"}, "a.md", ".txt", false},
+		{"extension matches query does not", SearchQuery{Query: "zzz", Extension: ".txt"}, "a.txt", ".txt", false},
+
+		// No criteria matches nothing.
+		{"no criteria matches nothing", SearchQuery{}, "a.txt", "", false},
 	}
-	qc := SearchQuery{Query: "READ", StartsWith: true, CaseSensitive: false}
-	if !qc.matches("README.md", "") {
-		t.Error("case-insensitive prefix failed")
-	}
-	qe := SearchQuery{Extension: ".txt"}
-	if !qe.matches("a.txt", ".txt") || qe.matches("a.TXT", ".txt") || qe.matches("a.tar", ".txt") {
-		t.Error("extension match wrong")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.q.matches(tc.file, tc.ext); got != tc.want {
+				t.Errorf("matches(%q, %q) = %v, want %v", tc.file, tc.ext, got, tc.want)
+			}
+		})
 	}
 }
